@@ -21,6 +21,23 @@ from wallet.models import Barcode, BarcodeFormat, EventTicket, Location, Pass
 from pretix_passbook.forms import PNGImageField
 
 
+# Monkey-patch wallet.models.Location to use correct Apple PassKit field name
+# The wallet-py3k library uses 'distance' but Apple's spec requires 'maxDistance'
+_original_location_json_dict = Location.json_dict
+
+
+def _patched_location_json_dict(self):
+    """Patched version that converts 'distance' to 'maxDistance' for Apple compatibility"""
+    d = dict(self.__dict__)
+    # Convert 'distance' to 'maxDistance' as per Apple's PassKit specification
+    if 'distance' in d and d['distance'] is not None:
+        d['maxDistance'] = d.pop('distance')
+    return d
+
+
+Location.json_dict = _patched_location_json_dict
+
+
 class PassbookOutput(BaseTicketOutput):
     identifier = "passbook"
     verbose_name = "Passbook Tickets"
@@ -271,10 +288,10 @@ class PassbookOutput(BaseTicketOutput):
                         ],
                         initial="always",
                         help_text=_(
-                            "Controls when the pass appears on the lock screen:\n"
-                            "• 'Show pass whenever at location' - Pass shows anytime you're near the venue, even months before the event\n"
-                            "• 'Show pass only when at location AND around event time' - Requires BOTH conditions (recommended to prevent showing too early)\n"
-                            "• 'Show pass only around event time' - Ignores location completely, only shows based on event date"
+                            "Controls when the pass appears on the lock screen:\n\n"
+                            "• Show pass whenever at location (default): Pass shows anytime you're near the venue, even months before the event\n\n"
+                            "• Show pass only when at location AND around event time (recommended): Requires BOTH conditions to prevent showing too early\n\n"
+                            "• Show pass only around event time, ignore location: Ignores location completely, only shows based on event date"
                         ),
                         required=False,
                     ),
@@ -562,6 +579,7 @@ class PassbookOutput(BaseTicketOutput):
             if location:
                 # Set maxDistance for time_and_location mode (AND condition)
                 # This requires BOTH being at location AND being around event time
+                # Note: We set location.distance which our monkey-patch converts to 'maxDistance'
                 if location_mode == "time_and_location":
                     max_distance = self.event.settings.get("ticketoutput_passbook_location_max_distance", 250)
                     location.distance = max_distance
