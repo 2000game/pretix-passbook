@@ -261,17 +261,16 @@ class PassbookOutput(BaseTicketOutput):
                     ),
                 ),
                 (
-                    "location_max_distance",
-                    forms.IntegerField(
-                        label=_("Maximum distance for location relevance (meters)"),
+                    "disable_location_relevance",
+                    forms.BooleanField(
+                        label=_("Disable location-based relevance"),
                         help_text=_(
-                            "Optional. When set, the pass will only appear on the lock screen when the user is "
-                            "within this distance from the event location AND it's around the event time. "
-                            "This prevents the pass from always showing at the location. "
-                            "Recommended value: 100-500 meters. Leave empty to show pass whenever at the location."
+                            "When enabled, the pass will NOT appear on the lock screen based on location. "
+                            "Instead, it will only appear around the event time (based on relevantDate). "
+                            "This prevents the pass from showing up when you're at the venue but the event "
+                            "is days, weeks, or months away. Recommended for most events."
                         ),
                         required=False,
-                        min_value=1,
                     ),
                 ),
             ]
@@ -512,33 +511,30 @@ class PassbookOutput(BaseTicketOutput):
         else:
             passfile.relevantDate = date_from_local_time.isoformat()
 
-        if (
-            self.event.settings.passbook_latitude
-            and self.event.settings.passbook_longitude
-        ):
-            location = Location(
-                self.event.settings.passbook_latitude,
-                self.event.settings.passbook_longitude,
-            )
-            if self.event.settings.get("ticketoutput_passbook_location_max_distance"):
-                location.distance = self.event.settings.get("ticketoutput_passbook_location_max_distance")
-            passfile.locations = [location]
-        elif (
-            order_position.subevent
-            and order_position.subevent.geo_lat
-            and order_position.subevent.geo_lon
-        ):
-            location = Location(
-                order_position.subevent.geo_lat, order_position.subevent.geo_lon
-            )
-            if self.event.settings.get("ticketoutput_passbook_location_max_distance"):
-                location.distance = self.event.settings.get("ticketoutput_passbook_location_max_distance")
-            passfile.locations = [location]
-        elif self.event.geo_lat and self.event.geo_lon:
-            location = Location(self.event.geo_lat, self.event.geo_lon)
-            if self.event.settings.get("ticketoutput_passbook_location_max_distance"):
-                location.distance = self.event.settings.get("ticketoutput_passbook_location_max_distance")
-            passfile.locations = [location]
+        # Only add location if location-based relevance is not disabled
+        if not self.event.settings.get("ticketoutput_passbook_disable_location_relevance"):
+            if (
+                self.event.settings.passbook_latitude
+                and self.event.settings.passbook_longitude
+            ):
+                passfile.locations = [
+                    Location(
+                        self.event.settings.passbook_latitude,
+                        self.event.settings.passbook_longitude,
+                    )
+                ]
+            elif (
+                order_position.subevent
+                and order_position.subevent.geo_lat
+                and order_position.subevent.geo_lon
+            ):
+                passfile.locations = [
+                    Location(
+                        order_position.subevent.geo_lat, order_position.subevent.geo_lon
+                    )
+                ]
+            elif self.event.geo_lat and self.event.geo_lon:
+                passfile.locations = [Location(self.event.geo_lat, self.event.geo_lon)]
 
         icon_file = self.event.settings.get("ticketoutput_passbook_icon")
         if icon_file:
