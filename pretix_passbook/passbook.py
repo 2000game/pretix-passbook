@@ -261,16 +261,36 @@ class PassbookOutput(BaseTicketOutput):
                     ),
                 ),
                 (
-                    "disable_location_relevance",
-                    forms.BooleanField(
-                        label=_("Disable location-based relevance"),
+                    "location_relevance_mode",
+                    forms.ChoiceField(
+                        label=_("Location relevance mode"),
+                        choices=[
+                            ("always", _("Show pass whenever at location (default)")),
+                            ("time_and_location", _("Show pass only when at location AND around event time (recommended)")),
+                            ("time_only", _("Show pass only around event time, ignore location")),
+                        ],
+                        initial="always",
                         help_text=_(
-                            "When enabled, the pass will NOT appear on the lock screen based on location. "
-                            "Instead, it will only appear around the event time (based on relevantDate). "
-                            "This prevents the pass from showing up when you're at the venue but the event "
-                            "is days, weeks, or months away. Recommended for most events."
+                            "Controls when the pass appears on the lock screen:\n"
+                            "• 'Show pass whenever at location' - Pass shows anytime you're near the venue, even months before the event\n"
+                            "• 'Show pass only when at location AND around event time' - Requires BOTH conditions (recommended to prevent showing too early)\n"
+                            "• 'Show pass only around event time' - Ignores location completely, only shows based on event date"
                         ),
                         required=False,
+                    ),
+                ),
+                (
+                    "location_max_distance",
+                    forms.IntegerField(
+                        label=_("Maximum distance for location relevance (meters)"),
+                        help_text=_(
+                            "When using 'Show pass only when at location AND around event time' mode, this sets how close "
+                            "the user must be to the venue. Recommended: 100-500 meters. "
+                            "Only used when 'time_and_location' mode is selected."
+                        ),
+                        initial=250,
+                        required=False,
+                        min_value=1,
                     ),
                 ),
             ]
@@ -511,30 +531,42 @@ class PassbookOutput(BaseTicketOutput):
         else:
             passfile.relevantDate = date_from_local_time.isoformat()
 
-        # Only add location if location-based relevance is not disabled
-        if not self.event.settings.get("ticketoutput_passbook_disable_location_relevance"):
+        # Handle location-based relevance based on the configured mode
+        location_mode = self.event.settings.get("ticketoutput_passbook_location_relevance_mode", "always")
+        
+        # Determine if we should add locations and whether to set maxDistance
+        should_add_location = location_mode in ("always", "time_and_location")
+        
+        if should_add_location:
+            location = None
+            
             if (
                 self.event.settings.passbook_latitude
                 and self.event.settings.passbook_longitude
             ):
-                passfile.locations = [
-                    Location(
-                        self.event.settings.passbook_latitude,
-                        self.event.settings.passbook_longitude,
-                    )
-                ]
+                location = Location(
+                    self.event.settings.passbook_latitude,
+                    self.event.settings.passbook_longitude,
+                )
             elif (
                 order_position.subevent
                 and order_position.subevent.geo_lat
                 and order_position.subevent.geo_lon
             ):
-                passfile.locations = [
-                    Location(
-                        order_position.subevent.geo_lat, order_position.subevent.geo_lon
-                    )
-                ]
+                location = Location(
+                    order_position.subevent.geo_lat, order_position.subevent.geo_lon
+                )
             elif self.event.geo_lat and self.event.geo_lon:
-                passfile.locations = [Location(self.event.geo_lat, self.event.geo_lon)]
+                location = Location(self.event.geo_lat, self.event.geo_lon)
+            
+            if location:
+                # Set maxDistance for time_and_location mode (AND condition)
+                # This requires BOTH being at location AND being around event time
+                if location_mode == "time_and_location":
+                    max_distance = self.event.settings.get("ticketoutput_passbook_location_max_distance", 250)
+                    location.distance = max_distance
+                
+                passfile.locations = [location]
 
         icon_file = self.event.settings.get("ticketoutput_passbook_icon")
         if icon_file:
